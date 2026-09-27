@@ -148,7 +148,7 @@
   .stat-divider { width: 1px; background: var(--hairline); margin: 0 4px; }
 
   /* ---------- Recent ---------- */
-  .section-title-row { display: flex; align-items: baseline; justify-content: space-between; margin: 26px 0 6px 0; }
+  .section-title-row { display: flex; align-items: center; justify-content: space-between; margin: 26px 0 6px 0; }
   .section-title { font-size: 15px; font-weight: 700; margin: 0; }
   .section-sub { font-size: 12px; color: var(--text-faint); font-weight: 600; }
 
@@ -235,6 +235,23 @@
   .primary-btn.income-btn { background: var(--good); color: var(--bg); }
 
   .hint { font-size: 12.5px; color: var(--text-faint); text-align: center; margin-top: 12px; }
+
+  /* ---------- Share sheet ---------- */
+  .share-textarea {
+    width: 100%; min-height: 170px; resize: none; outline: none;
+    font-family: inherit; font-size: 13.5px; line-height: 1.7; color: var(--text);
+    background: var(--surface-sunken); border: none; border-radius: var(--radius-md);
+    padding: 14px 16px; margin-bottom: 18px;
+  }
+  .share-actions { display: flex; flex-direction: column; gap: 10px; }
+
+  .toast {
+    position: fixed; left: 50%; bottom: calc(104px + env(safe-area-inset-bottom)); transform: translate(-50%, 12px);
+    background: var(--text); color: var(--bg); padding: 11px 20px; border-radius: 100px;
+    font-size: 13px; font-weight: 600; opacity: 0; pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease; z-index: 50; white-space: nowrap;
+  }
+  .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
   /* ---------- Settings sheet ---------- */
   .settings-block { margin-bottom: 26px; }
@@ -331,8 +348,13 @@
   </div>
 
   <div class="section-title-row">
-    <div class="section-title">Recent</div>
-    <div class="section-sub" id="recent-sub"></div>
+    <div>
+      <div class="section-title">Recent</div>
+      <div class="section-sub" id="recent-sub"></div>
+    </div>
+    <button class="icon-btn" id="open-share-btn" aria-label="Share expenses">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.6" x2="15.4" y2="6.4"/><line x1="8.6" y1="13.4" x2="15.4" y2="17.6"/></svg>
+    </button>
   </div>
   <div id="txn-area">
     <div class="empty-state" id="empty-state">No expenses yet.<br>Tap + to log your first one.</div>
@@ -380,6 +402,20 @@
   <button class="primary-btn income-btn" id="save-income-btn" disabled>Add to balance</button>
   <div class="hint">This adds on top of your current total — nothing is reset.</div>
 </div>
+
+<!-- Share Sheet -->
+<div class="sheet" id="share-sheet">
+  <div class="sheet-handle"></div>
+  <h2 style="margin-bottom:18px;">Share expenses</h2>
+  <div class="field-label">Preview</div>
+  <textarea class="share-textarea" id="share-text-preview" readonly></textarea>
+  <div class="share-actions">
+    <button class="primary-btn" id="share-text-btn">Share as text</button>
+    <button class="primary-btn income-btn" id="share-image-btn">Share as image</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
 
 <!-- Settings Sheet -->
 <div class="sheet" id="settings-sheet">
@@ -755,12 +791,14 @@
   var expenseSheet = document.getElementById("expense-sheet");
   var incomeSheet = document.getElementById("income-sheet");
   var settingsSheet = document.getElementById("settings-sheet");
+  var shareSheet = document.getElementById("share-sheet");
 
   function closeAllSheets() {
     backdrop.classList.remove("open");
     expenseSheet.classList.remove("open");
     incomeSheet.classList.remove("open");
     settingsSheet.classList.remove("open");
+    shareSheet.classList.remove("open");
   }
 
   function openExpenseSheet(editTxn) {
@@ -803,10 +841,187 @@
   }
   function closeSettingsSheet() { backdrop.classList.remove("open"); settingsSheet.classList.remove("open"); }
 
+  function openShareSheet() {
+    document.getElementById("share-text-preview").value = buildShareText();
+    backdrop.classList.add("open");
+    shareSheet.classList.add("open");
+  }
+  function closeShareSheet() { backdrop.classList.remove("open"); shareSheet.classList.remove("open"); }
+
   document.getElementById("open-expense-btn").addEventListener("click", function() { openExpenseSheet(null); });
   document.getElementById("open-income-btn").addEventListener("click", openIncomeSheet);
   document.getElementById("open-settings-btn").addEventListener("click", openSettingsSheet);
+  document.getElementById("open-share-btn").addEventListener("click", openShareSheet);
   backdrop.addEventListener("click", closeAllSheets);
+
+  /* ---------- Share ---------- */
+  var toastEl = document.getElementById("toast");
+  var toastTimer = null;
+  function showToast(msg) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function() { toastEl.classList.remove("show"); }, 2200);
+  }
+
+  function buildShareText() {
+    var list = scopedTransactions().slice().sort(function(a, b) { return b.ts - a.ts; });
+    var t = computeTotals();
+    var lines = list.map(function(txn) {
+      var tag = findTag(txn.tagId);
+      var name = tag ? tag.name : "Other";
+      return name + " - " + fmt(txn.amount);
+    });
+    var heading = "My Expenses" + (state.settings.monthlyReset ? " (This month)" : "");
+    var body = lines.length ? lines.join("\n") : "No expenses logged yet.";
+    return heading + "\n\n" + body + "\n\nTotal spent: " + fmt(t.spent);
+  }
+
+  document.getElementById("share-text-btn").addEventListener("click", async function() {
+    var text = document.getElementById("share-text-preview").value;
+    if (navigator.share) {
+      try { await navigator.share({ text: text, title: "My Expenses" }); return; }
+      catch (e) { if (e && e.name === "AbortError") return; }
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("Copied to clipboard");
+    } catch (e) {
+      showToast("Couldn't copy — select the text above manually");
+    }
+  });
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function buildShareCanvas() {
+    var list = scopedTransactions().slice().sort(function(a, b) { return b.ts - a.ts; }).slice(0, 25);
+    var t = computeTotals();
+
+    var W = 720, pad = 44, rowH = 68, headerH = 118, footerH = 100;
+    var H = headerH + Math.max(list.length, 1) * rowH + footerH;
+
+    var canvas = document.createElement("canvas");
+    var scale = 2;
+    canvas.width = W * scale; canvas.height = H * scale;
+    var ctx = canvas.getContext("2d");
+    ctx.scale(scale, scale);
+
+    var bg = cssVar("--bg"), surface = cssVar("--surface"), text = cssVar("--text");
+    var textSoft = cssVar("--text-soft"), textFaint = cssVar("--text-faint");
+    var hairline = cssVar("--hairline"), bad = cssVar("--bad");
+
+    ctx.fillStyle = bg;
+    ctx.fillRect(0, 0, W, H);
+    roundRect(ctx, 16, 16, W - 32, H - 32, 28);
+    ctx.fillStyle = surface;
+    ctx.fill();
+
+    ctx.fillStyle = text;
+    ctx.font = "800 26px Manrope, sans-serif";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText("My Expenses" + (state.settings.monthlyReset ? " · This month" : ""), pad, 68);
+
+    var dateStr = new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+    ctx.fillStyle = textFaint;
+    ctx.font = "600 14px Manrope, sans-serif";
+    ctx.fillText(dateStr, pad, 92);
+
+    var y = headerH;
+    if (list.length === 0) {
+      ctx.fillStyle = textFaint;
+      ctx.font = "600 15px Manrope, sans-serif";
+      ctx.fillText("No expenses logged yet.", pad, y + 36);
+      y += rowH;
+    } else {
+      list.forEach(function(txn) {
+        var tag = findTag(txn.tagId);
+        var name = tag ? tag.name : "Other";
+        var color = tag ? cssVar("--tag-" + ((tag.slot % TAG_SLOT_COUNT) + 1)) : textFaint;
+
+        ctx.beginPath();
+        ctx.arc(pad + 10, y + 34, 10, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        ctx.fillStyle = text;
+        ctx.font = "700 17px Manrope, sans-serif";
+        ctx.fillText(name, pad + 34, y + 40);
+
+        var dstr = new Date(txn.ts).toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+        ctx.fillStyle = textFaint;
+        ctx.font = "600 12px Manrope, sans-serif";
+        ctx.fillText(dstr, pad + 34, y + 56);
+
+        ctx.fillStyle = bad;
+        ctx.font = "700 17px Manrope, sans-serif";
+        var amtText = "-" + fmt(txn.amount);
+        var amtWidth = ctx.measureText(amtText).width;
+        ctx.fillText(amtText, W - pad - amtWidth, y + 40);
+
+        ctx.strokeStyle = hairline;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pad, y + rowH - 8);
+        ctx.lineTo(W - pad, y + rowH - 8);
+        ctx.stroke();
+
+        y += rowH;
+      });
+    }
+
+    y += 14;
+    ctx.fillStyle = textSoft;
+    ctx.font = "600 14px Manrope, sans-serif";
+    ctx.fillText("Total spent", pad, y + 26);
+    ctx.fillStyle = bad;
+    ctx.font = "800 22px Manrope, sans-serif";
+    var totalText = fmt(t.spent);
+    var totalWidth = ctx.measureText(totalText).width;
+    ctx.fillText(totalText, W - pad - totalWidth, y + 30);
+
+    ctx.fillStyle = textFaint;
+    ctx.font = "700 12px Manrope, sans-serif";
+    ctx.fillText("Pocket", pad, H - 26);
+
+    return canvas;
+  }
+
+  document.getElementById("share-image-btn").addEventListener("click", async function() {
+    var canvas = buildShareCanvas();
+    canvas.toBlob(async function(blob) {
+      if (!blob) { showToast("Couldn't generate image"); return; }
+      var file = new File([blob], "expenses.png", { type: "image/png" });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: "My Expenses" }); return; }
+        catch (e) { if (e && e.name === "AbortError") return; }
+      }
+      try {
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement("a");
+        a.href = url; a.download = "expenses.png";
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(function() { URL.revokeObjectURL(url); }, 4000);
+        showToast("Image saved");
+      } catch (e) {
+        showToast("Couldn't save the image on this browser");
+      }
+    }, "image/png");
+  });
 
   /* ---------- Settings UI ---------- */
   function updateSettingsUI() {
