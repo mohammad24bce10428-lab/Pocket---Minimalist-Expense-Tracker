@@ -214,10 +214,10 @@
 
   .new-tag-form { display: none; flex-direction: column; gap: 12px; background: var(--surface-sunken); border-radius: var(--radius-md); padding: 16px; margin: -8px 0 22px 0; }
   .new-tag-form.open { display: flex; }
-  .new-tag-form input[type="text"] {
+  .text-input, .new-tag-form input[type="text"] {
     font-family: inherit; font-size: 15px; font-weight: 600; padding: 11px 14px;
     border-radius: var(--radius-sm); border: 1.5px solid var(--hairline); outline: none;
-    background: var(--surface); color: var(--text);
+    background: var(--surface); color: var(--text); width: 100%;
   }
   .color-swatches { display: flex; gap: 8px; flex-wrap: wrap; }
   .color-swatch { width: 28px; height: 28px; border-radius: 50%; border: 2.5px solid transparent; cursor: pointer; }
@@ -233,6 +233,7 @@
   }
   .primary-btn:disabled { opacity: 0.4; }
   .primary-btn.income-btn { background: var(--good); color: var(--bg); }
+  .primary-btn.danger-btn { background: var(--bad-soft); color: var(--bad); margin-top: 10px; }
 
   .hint { font-size: 12.5px; color: var(--text-faint); text-align: center; margin-top: 12px; }
 
@@ -378,10 +379,10 @@
     <span class="currency">₹</span>
     <input type="number" inputmode="decimal" id="expense-amount" placeholder="0" min="0" step="0.01">
   </div>
-  <div class="field-label">Tag it as</div>
+  <div class="field-label">Tag it as <span style="font-weight:500;color:var(--text-faint);">— hold a tag to edit or remove it</span></div>
   <div class="tag-grid" id="expense-tag-grid"></div>
   <div class="new-tag-form" id="new-tag-form">
-    <input type="text" id="new-tag-name" placeholder="Tag name" maxlength="18">
+    <input type="text" id="new-tag-name" placeholder="Tag name" maxlength="32">
     <div class="color-swatches" id="new-tag-colors"></div>
     <div class="new-tag-actions">
       <button class="cancel" id="new-tag-cancel">Cancel</button>
@@ -401,6 +402,18 @@
   </div>
   <button class="primary-btn income-btn" id="save-income-btn" disabled>Add to balance</button>
   <div class="hint">This adds on top of your current total — nothing is reset.</div>
+</div>
+
+<!-- Tag Options Sheet -->
+<div class="sheet" id="tag-options-sheet">
+  <div class="sheet-handle"></div>
+  <h2 id="tag-options-title" style="margin-bottom:18px;">Tag</h2>
+  <div class="field-label">Color</div>
+  <div class="color-swatches" id="tag-options-colors" style="margin-bottom:22px;"></div>
+  <div class="field-label">Rename</div>
+  <input type="text" id="tag-options-name" class="text-input" maxlength="32" style="margin-bottom:22px;">
+  <button class="primary-btn" id="tag-options-save-btn">Save changes</button>
+  <button class="primary-btn danger-btn" id="tag-options-delete-btn">Delete tag</button>
 </div>
 
 <!-- Share Sheet -->
@@ -696,14 +709,48 @@
     grid.innerHTML = chips;
 
     Array.prototype.forEach.call(grid.querySelectorAll("[data-tag]"), function(btn) {
-      btn.addEventListener("click", function() {
-        selectedTagId = btn.getAttribute("data-tag");
-        closeNewTagForm();
-        renderTagGrid();
-        updateSaveExpenseState();
-      });
+      attachTagPressHandlers(btn, btn.getAttribute("data-tag"));
     });
     document.getElementById("new-tag-btn").addEventListener("click", openNewTagForm);
+  }
+
+  var LONG_PRESS_MS = 480;
+  var LONG_PRESS_MOVE_THRESHOLD = 10;
+
+  function attachTagPressHandlers(btn, tagId) {
+    var timer = null;
+    var longPressed = false;
+    var startX = 0, startY = 0;
+
+    function cancelTimer() { clearTimeout(timer); timer = null; }
+
+    btn.addEventListener("pointerdown", function(e) {
+      longPressed = false;
+      startX = e.clientX; startY = e.clientY;
+      cancelTimer();
+      timer = setTimeout(function() {
+        longPressed = true;
+        if (navigator.vibrate) { try { navigator.vibrate(15); } catch (err) {} }
+        openTagOptionsSheet(tagId);
+      }, LONG_PRESS_MS);
+    });
+    btn.addEventListener("pointermove", function(e) {
+      if (!timer) return;
+      if (Math.abs(e.clientX - startX) > LONG_PRESS_MOVE_THRESHOLD || Math.abs(e.clientY - startY) > LONG_PRESS_MOVE_THRESHOLD) {
+        cancelTimer();
+      }
+    });
+    btn.addEventListener("pointerup", cancelTimer);
+    btn.addEventListener("pointerleave", cancelTimer);
+    btn.addEventListener("pointercancel", cancelTimer);
+
+    btn.addEventListener("click", function(e) {
+      if (longPressed) { e.preventDefault(); e.stopPropagation(); longPressed = false; return; }
+      selectedTagId = tagId;
+      closeNewTagForm();
+      renderTagGrid();
+      updateSaveExpenseState();
+    });
   }
 
   var pickedSlot = 7;
@@ -741,6 +788,66 @@
     closeNewTagForm();
     renderTagGrid();
     updateSaveExpenseState();
+  });
+
+  /* ---------- Tag options (long-press) ---------- */
+  var tagOptionsId = null;
+  var tagOptionsPickedSlot = 0;
+
+  function openTagOptionsSheet(tagId) {
+    var tag = findTag(tagId);
+    if (!tag) return;
+    tagOptionsId = tagId;
+    tagOptionsPickedSlot = tag.slot;
+    document.getElementById("tag-options-title").textContent = tag.name;
+    document.getElementById("tag-options-name").value = tag.name;
+    renderTagOptionsColors();
+    backdrop.classList.add("open");
+    tagOptionsSheet.classList.add("open");
+  }
+  function closeTagOptionsSheet() {
+    backdrop.classList.remove("open");
+    tagOptionsSheet.classList.remove("open");
+    tagOptionsId = null;
+  }
+
+  function renderTagOptionsColors() {
+    var wrap = document.getElementById("tag-options-colors");
+    var options = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    wrap.innerHTML = options.map(function(slot) {
+      return '<div class="color-swatch' + (slot === tagOptionsPickedSlot ? ' picked' : '') + '" data-slot="' + slot + '" style="background:' + slotVar(slot) + '"></div>';
+    }).join("");
+    Array.prototype.forEach.call(wrap.querySelectorAll(".color-swatch"), function(sw) {
+      sw.addEventListener("click", function() {
+        tagOptionsPickedSlot = parseInt(sw.getAttribute("data-slot"), 10);
+        Array.prototype.forEach.call(wrap.querySelectorAll(".color-swatch"), function(s) { s.classList.remove("picked"); });
+        sw.classList.add("picked");
+      });
+    });
+  }
+
+  document.getElementById("tag-options-save-btn").addEventListener("click", function() {
+    var tag = findTag(tagOptionsId);
+    if (!tag) return;
+    var name = document.getElementById("tag-options-name").value.trim();
+    if (!name) return;
+    tag.name = name;
+    tag.slot = tagOptionsPickedSlot;
+    saveState();
+    closeTagOptionsSheet();
+    renderTagGrid();
+    renderTxns();
+  });
+
+  document.getElementById("tag-options-delete-btn").addEventListener("click", function() {
+    if (!tagOptionsId) return;
+    state.tags = state.tags.filter(function(t) { return t.id !== tagOptionsId; });
+    if (selectedTagId === tagOptionsId) selectedTagId = null;
+    saveState();
+    closeTagOptionsSheet();
+    renderTagGrid();
+    updateSaveExpenseState();
+    renderTxns();
   });
 
   function updateSaveExpenseState() {
@@ -792,6 +899,7 @@
   var incomeSheet = document.getElementById("income-sheet");
   var settingsSheet = document.getElementById("settings-sheet");
   var shareSheet = document.getElementById("share-sheet");
+  var tagOptionsSheet = document.getElementById("tag-options-sheet");
 
   function closeAllSheets() {
     backdrop.classList.remove("open");
@@ -799,6 +907,7 @@
     incomeSheet.classList.remove("open");
     settingsSheet.classList.remove("open");
     shareSheet.classList.remove("open");
+    tagOptionsSheet.classList.remove("open");
   }
 
   function openExpenseSheet(editTxn) {
