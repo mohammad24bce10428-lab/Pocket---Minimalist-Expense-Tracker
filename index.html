@@ -233,6 +233,11 @@
   }
   .primary-btn:disabled { opacity: 0.4; }
   .primary-btn.income-btn { background: var(--good); color: var(--bg); }
+  .reset-open-btn {
+    font-family: inherit; font-size: 13px; font-weight: 700; padding: 9px 16px;
+    border-radius: 100px; border: 1px solid var(--hairline); background: var(--bad-soft);
+    color: var(--bad); cursor: pointer; flex-shrink: 0;
+  }
   .primary-btn.danger-btn { background: var(--bad-soft); color: var(--bad); margin-top: 10px; }
 
   .hint { font-size: 12.5px; color: var(--text-faint); text-align: center; margin-top: 12px; }
@@ -485,6 +490,30 @@
       </label>
     </div>
   </div>
+
+  <div class="settings-block">
+    <div class="settings-row">
+      <div class="settings-row-text">
+        <div class="settings-row-title">Reset balance</div>
+        <div class="settings-desc">Clear your balance and expenses, then start again with a new amount. Your tags and settings stay.</div>
+      </div>
+      <button class="reset-open-btn" id="open-reset-btn">Reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- Reset Sheet -->
+<div class="sheet" id="reset-sheet">
+  <div class="sheet-handle"></div>
+  <h2 style="margin-bottom:10px;">Start fresh?</h2>
+  <div class="settings-desc" style="margin:0 0 20px 0;">This clears your total balance and all logged expenses. It can't be undone.</div>
+  <div class="field-label">New balance (optional)</div>
+  <div class="amount-input-row">
+    <span class="currency">₹</span>
+    <input type="number" inputmode="decimal" id="reset-amount" placeholder="0" min="0" step="0.01">
+  </div>
+  <button class="primary-btn danger-btn" id="confirm-reset-btn" style="margin-top:0;">Reset and start fresh</button>
+  <button class="primary-btn" id="cancel-reset-btn" style="margin-top:10px;background:transparent;color:var(--text-soft);">Cancel</button>
 </div>
 
 <script>
@@ -900,6 +929,7 @@
   var settingsSheet = document.getElementById("settings-sheet");
   var shareSheet = document.getElementById("share-sheet");
   var tagOptionsSheet = document.getElementById("tag-options-sheet");
+  var resetSheet = document.getElementById("reset-sheet");
 
   function closeAllSheets() {
     backdrop.classList.remove("open");
@@ -908,6 +938,7 @@
     settingsSheet.classList.remove("open");
     shareSheet.classList.remove("open");
     tagOptionsSheet.classList.remove("open");
+    resetSheet.classList.remove("open");
   }
 
   function openExpenseSheet(editTxn) {
@@ -1153,6 +1184,25 @@
       state.settings.palette = btn.getAttribute("data-palette");
       saveState(); applyTheme(); updateSettingsUI(); render();
     });
+  });
+  document.getElementById("open-reset-btn").addEventListener("click", function() {
+    settingsSheet.classList.remove("open");
+    document.getElementById("reset-amount").value = "";
+    resetSheet.classList.add("open");
+  });
+  document.getElementById("cancel-reset-btn").addEventListener("click", closeAllSheets);
+  document.getElementById("confirm-reset-btn").addEventListener("click", function() {
+    var amount = parseFloat(document.getElementById("reset-amount").value);
+    state.incomes = [];
+    state.transactions = [];
+    if (amount > 0) {
+      state.incomes.push({ id: "i-" + Date.now(), amount: amount, ts: Date.now() });
+    }
+    selectedTagId = null;
+    saveState();
+    closeAllSheets();
+    render();
+    showToast(amount > 0 ? "Fresh start with " + fmt(amount) : "Balance reset");
   });
   document.getElementById("monthly-reset-toggle").addEventListener("change", function() {
     state.settings.monthlyReset = this.checked;
